@@ -1,0 +1,25 @@
+<head>
+    {% load static %}
+<link rel="stylesheet" href="{% static 'css/style2.css' %}">
+
+</head>
+<body>
+    {% load static %}
+  <div class="navbar"  style="background-image: url({% static 'images/HD.jpg' %}) ; ">
+    <nav >
+        <h2 class="logo">IOT</h2>
+
+            <ul>
+                    <li>  <a href="aff/" >Table</a></li>
+                    <li>  <a href="{% url 'index' %}" >Chart</a></li>
+                    <li>  <a href="#" >Json</a></li>
+
+
+            </ul>
+            <p> </p>
+
+
+    </nav>
+</div>
+
+</body>
