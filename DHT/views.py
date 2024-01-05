@@ -1,4 +1,10 @@
+import json
+
+import asyncio
 from django.shortcuts import render
+from django.views.decorators.csrf import csrf_exempt
+from telegram import Bot
+
 from .models import Dht11  # Assurez-vous d'importer le modèle Dht11
 from django.utils import timezone
 import csv
@@ -9,16 +15,48 @@ from datetime import timedelta
 import datetime
 import telepot
 
-def table(request):
+import csv
+from django.shortcuts import render
+from django.http import HttpResponse
+import datetime
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+import json
+from django.conf import settings
+from django.core.mail import send_mail
 
+
+def table(request):
     derniere_ligne = Dht11.objects.last()
     derniere_date = Dht11.objects.last().dt
     delta_temps = timezone.now() - derniere_date
-    difference_minutes = delta_temps.seconds // 60
-    temps_ecoule = ' il y a ' + str(difference_minutes) + ' min'
-    if difference_minutes > 60:
-        temps_ecoule = 'il y ' + str(difference_minutes // 60) + 'h' + str(difference_minutes % 60) + 'min'
-    valeurs = {'date': temps_ecoule, 'id': derniere_ligne.id, 'temp': derniere_ligne.temp, 'hum': derniere_ligne.hum}
+    days = delta_temps.days
+    seconds = delta_temps.seconds + days * 86400
+    if seconds >= 60:
+        minutes = seconds // 60
+        seconds = seconds % 60
+        if minutes >= 60:
+            heures = minutes // 60
+            minutes %= 60
+            if heures >= 24:
+                jours = heures // 24
+                heures %= 24
+                if jours == 1:
+                    temps_ecoule = str(jours) + ' day ' + str(heures) + ' h ' + str(minutes) + ' min ' + str(
+                        seconds) + ' sc' + ' ago'
+                else:
+                    temps_ecoule = str(jours) + ' days ' + str(heures) + ' h ' + str(minutes) + ' min ' + str(
+                        seconds) + ' sc' + ' ago'
+            else:
+                temps_ecoule = str(heures) + ' h ' + str(minutes) + ' min ' + str(seconds) + ' sc ' + 'ago'
+        else:
+            temps_ecoule = str(minutes) + ' min ' + str(seconds) + ' sc' + ' ago'
+
+    else:
+        temps_ecoule = str(seconds) + ' sc' + ' ago'
+
+    valeurs = {'date': temps_ecoule, 'id': derniere_ligne.id, 'temp': derniere_ligne.temp,
+               'hum': derniere_ligne.hum}
     return render(request, 'value.html', {'valeurs': valeurs})
 
 
@@ -40,6 +78,7 @@ def index_view(request):
 #pour afficher les graphes
 def graphique(request):
     return render(request, 'Chart.html')
+
 # récupérer toutes les valeur de température et humidity sous forme un #fichier json
 def chart_data(request):
     dht = Dht11.objects.all()
@@ -53,64 +92,76 @@ def chart_data(request):
 
 #pour récupérer les valeurs de température et humidité de dernier 24h
 # et envoie sous forme JSON
-def chart_data_jour(request):
-    dht = Dht11.objects.all()
+def chart_data_heure(request):
     now = timezone.now()
+    dht = Dht11.objects.filter(dt__hour=now.time().hour, dt__day=now.date().day, dt__month=now.date().month,
+                               dt__year=now.date().year)
+    return JsonResponse(limitingPoints(dht))
 
-    # Récupérer l'heure il y a 24 heures
-    last_24_hours = now - timezone.timedelta(hours=24)
 
-    # Récupérer tous les objets de Module créés au cours des 24 dernières heures
-    dht = Dht11.objects.filter(dt__range=(last_24_hours, now))
-    data = {
-        'temps': [Dt.dt for Dt in dht],
-        'temperature': [Temp.temp for Temp in dht],
-        'humidity': [Hum.hum for Hum in dht]
-    }
-    return JsonResponse(data)
+def chart_data_jour(request):
+    now = timezone.now().date()  # Assuming you want to filter by the current date
+    dht = Dht11.objects.filter(dt__day=now.day, dt__month=now.month, dt__year=now.year)
+    return JsonResponse(limitingPoints(dht))
 
-#pour récupérer les valeurs de température et humidité de dernier semaine
-# et envoie sous forme JSON
-def chart_data_semaine(request):
-    dht = Dht11.objects.all()
-    # calcul de la date de début de la semaine dernière
-    date_debut_semaine = timezone.now().date() - datetime.timedelta(days=7)
-    print(datetime.timedelta(days=7))
-    print(date_debut_semaine)
 
-    # filtrer les enregistrements créés depuis le début de la semaine dernière
-    dht = Dht11.objects.filter(dt__gte=date_debut_semaine)
-
-    data = {
-        'temps': [Dt.dt for Dt in dht],
-        'temperature': [Temp.temp for Temp in dht],
-        'humidity': [Hum.hum for Hum in dht]
-    }
-
-    return JsonResponse(data)
-
-#pour récupérer les valeurs de température et humidité de dernier moins
-# et envoie sous forme JSON
 def chart_data_mois(request):
-    dht = Dht11.objects.all()
+    now = timezone.now().date()  # Assuming you want to filter by the current date
+    dht = Dht11.objects.filter(dt__month=now.month, dt__year=now.year)
+    return JsonResponse(limitingPoints(dht))
 
-    date_debut_semaine = timezone.now().date() - datetime.timedelta(days=30)
-    print(datetime.timedelta(days=30))
-    print(date_debut_semaine)
 
-    # filtrer les enregistrements créés depuis le début de la semaine dernière
-    dht = Dht11.objects.filter(dt__gte=date_debut_semaine)
-
-    data = {
-        'temps': [Dt.dt for Dt in dht],
-        'temperature': [Temp.temp for Temp in dht],
-        'humidity': [Hum.hum for Hum in dht]
+def limitingPoints(dht):
+    temps = [Dt.dt for Dt in dht]
+    temperatures = [Temp.temp for Temp in dht]
+    humidities = [Hum.hum for Hum in dht]
+    length = len(temps)
+    print(length)
+    if length >= 30:
+        samplesRate = length // 30
+        print(samplesRate)
+        temps = temps[::samplesRate]
+        print(len(temps))
+        humidities = humidities[::samplesRate]
+        print(len(humidities))
+        temperatures = temperatures[::samplesRate]
+        print(len(temperatures))
+    return {
+        'temps': temps,
+        'temperature': temperatures,
+        'humidity': humidities,
     }
-    return JsonResponse(data)
+def sendtele(request, message):
+    async def send_telegram_message(token, chat_id, message_text):
+        bot = Bot(token=token)
+        await bot.send_message(chat_id=chat_id, text=message_text)
 
-def sendtele():
-    token = '6810467864:AAEqt3A0Wbn9VuUI7wBV0AkIaR9qZ6ssIso'
-    rece_id = 5368258598
-    bot = telepot.Bot(token)
-    bot.sendMessage(rece_id, 'la température depasse la normale')
-    print(bot.sendMessage(rece_id, 'OK.'))
+    bot_token = '6810467864:AAEqt3A0Wbn9VuUI7wBV0AkIaR9qZ6ssIso'
+    chat_id = '5368258598'
+    message_text = message
+
+    asyncio.run(send_telegram_message(bot_token, chat_id, message_text))
+def sendmail(message):
+    subject = 'Alerte DHT'
+    email_from = settings.EMAIL_HOST_USER
+    recipient_list = ['maryamben200217@gmail.com']
+    send_mail(subject, message, email_from, recipient_list)
+@csrf_exempt
+def receive_data(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            temperature = data['temp']
+            humidity = data['hum']
+            Dht11.objects.create(temp=temperature, hum=humidity)
+            if temperature>17:
+                sendtele(request, "la température dépasse la normale")
+                sendmail("la température dépasse la normale")
+            if humidity>60:
+                sendtele(request, "l'humidité dépasse la normale")
+                sendmail("l'humidité dépasse la normale")
+            return JsonResponse({'status': 'success'})
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)})
+    else:
+        return JsonResponse({'status': 'error', 'message': 'Only POST requests are allowed'})
